@@ -1,5 +1,5 @@
-#ifndef PID_CONTROLLER_H
-#define PID_CONTROLLER_H
+#ifndef PID_CONTROLLER_HPP
+#define PID_CONTROLLER_HPP
 
 #include <chrono>
 #include <cmath>
