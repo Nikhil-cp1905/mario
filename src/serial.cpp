@@ -4,10 +4,9 @@
 #include <cstdint>
 #include <mutex>
 
-#include "tarzan.hpp"
+#include "serial.hpp"
 
-namespace tarzan {
-constexpr size_t TARZAN_MSG_LEN = sizeof(tarzan_msg) + 2;
+namespace serial {
 
 std::mutex write_mtx; // mutex to guard async write
 std::mutex error_mtx; // mutex to gaurd error in async write
@@ -30,7 +29,7 @@ void asyncWriteHandler(const boost::system::error_code &error,
                         // continue
 }
 
-Error asyncWrite(serial_port *serial, const uint8_t msg[TARZAN_MSG_LEN]) {
+Error asyncWrite(serial_port *serial, const uint8_t msg[], size_t MSG_LEN) {
 
   std::unique_lock<std::mutex> lock(write_mtx);
 
@@ -41,7 +40,7 @@ Error asyncWrite(serial_port *serial, const uint8_t msg[TARZAN_MSG_LEN]) {
 
   lock.unlock();
 
-  async_write(*serial, buffer(msg, TARZAN_MSG_LEN),
+  async_write(*serial, buffer(msg, MSG_LEN),
               [](const boost::system::error_code &error,
                  std::size_t bytes_transferred) {
                 asyncWriteHandler(error, bytes_transferred);
@@ -54,20 +53,21 @@ Error asyncWrite(serial_port *serial, const uint8_t msg[TARZAN_MSG_LEN]) {
     return Error::AsioWriteError;
 }
 
-Error write_msg(serial_port *serial, const tarzan_msg &msg) {
+template <typename msgType>
+Error write_msg(serial_port *serial, const msgType &msg, size_t MSG_LEN) {
 
-  uint8_t buffer[TARZAN_MSG_LEN];
+  uint8_t buffer[MSG_LEN];
 
-  if (auto result = cobs_encode(
-          reinterpret_cast<void *>(buffer), TARZAN_MSG_LEN,
-          reinterpret_cast<const void *>(&msg), sizeof(struct tarzan_msg));
+  if (auto result = cobs_encode(reinterpret_cast<void *>(buffer), MSG_LEN,
+                                reinterpret_cast<const void *>(&msg),
+                                sizeof(msgType));
       result.status != COBS_ENCODE_OK) {
     return Error::CobsEncodeError;
   }
 
-  buffer[TARZAN_MSG_LEN - 1] = 0x00;
+  buffer[MSG_LEN - 1] = 0x00;
 
-  return asyncWrite(serial, buffer);
+  return asyncWrite(serial, buffer, MSG_LEN);
 }
 
 void close(serial_port *serial) {
@@ -135,29 +135,81 @@ const char *get_error(enum Error err) {
   };
   return "Undefined Error";
 }
-} // namespace tarzan
+} // namespace serial
 
-#ifdef TARZAN_TEST_CPP
+namespace tarzan {
+struct inverse_msg {
+  double turn_table;
+  double first_link;
+  double second_link;
+  double pitch;
+  double roll;
+  double x;
+  double y;
+  double z;
+};
+
+struct imu_data {
+  double accel[3];
+  double gyro[3];
+  double mag[3];
+  double gyro_offset[3];
+};
+
+struct imu_msg {
+  struct imu_data baseLink;
+  struct imu_data firstLink;
+  struct imu_data secondLink;
+  struct imu_data differential;
+};
+
+struct DiffDriveTwist {
+  float linear_x;
+  float angular_z;
+};
+
+struct tarzan_msg {
+  struct DiffDriveTwist cmd;
+  struct inverse_msg inv;
+  struct imu_msg imu;
+  enum msg_type type;
+  uint32_t crc;
+};
+constexpr size_t TARZAN_MSG_LEN = sizeof(tarzan_msg) + 2; // tarzan message len
+							  
+struct tarzan_msg get_tarzan_msg(float linear_x, float angular_z){
+	struct tarzan_msg msg;
+
+	// DiffDrive var
+	struct DiffDriveTwist cmd = {.linear_x=linear_x, .angular_z=angular_z};	
+	
+  	uint32_t crc = serial::crc32_ieee(
+      		(uint8_t *)&msg, sizeof(struct tarzan::tarzan_msg) - sizeof(msg.crc));
+
+	msg = {.cmd=cmd, .inv={0}, .imu={0}, .crc=crc};
+
+	// tarzan msg
+	return msg;
+};
+}; // namespace tarzan
+
+#ifdef SERIAL_TEST_CPP
 #include <iostream>
 
 int main(int argc, char *argv[]) {
 
   std::string port = argv[1];
   boost::asio::io_context io;
-  boost::asio::serial_port *nucleo = tarzan::open(io, port, 9600);
+  boost::asio::serial_port *nucleo = serial::open(io, port, 9600);
 
-  tarzan::tarzan_msg msg;
-  msg.cmd.linear_x = 1.0;
-  msg.cmd.angular_z = 0.5;
-  msg.crc = tarzan::crc32_ieee(
-      (uint8_t *)&msg, sizeof(struct tarzan::tarzan_msg) - sizeof(msg.crc));
+  float linear_x = 1.0;
+  float angular_z = 0.5;
+  tarzan::tarzan_msg msg = tarzan::get_tarzan_msg(linear_x, angular_z);
 
-  std::cout << "crc = " << msg.crc;
-
-  std::string err = get_error(tarzan::write_msg(nucleo, msg));
+  std::string err = serial::get_error(serial::write_msg(nucleo, msg, tarzan::TARZAN_MSG_LEN));
 
   std::cout << "Error : " << err;
 
-  tarzan::close(nucleo);
+  serial::close(nucleo);
 }
 #endif
