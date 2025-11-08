@@ -56,6 +56,11 @@ target_include_directories(
 	nav PUBLIC include ${PCL_INCLUDE_DIRS} motionplanner)
 target_link_libraries(nav PUBLIC ${PCL_LIBRARIES} Eigen3::Eigen motionplanner)
 
+# pid controller
+add_library(pid_controller src/pid_controller.cpp)
+target_include_directories(pid_controller PUBLIC include ${PCL_INCLUDE_DIRS})
+target_link_libraries(pid_controller PUBLIC ${PCL_LIBRARIES} Eigen3::Eigen)
+
 option(BUILD_TESTS "Build Test Scipts" ON)
 if(BUILD_TESTS)
 	# tarzan test 
@@ -74,10 +79,15 @@ if(BUILD_TESTS)
 	target_compile_definitions(utils_test PRIVATE UTILS_TEST_CPP=1)
 	target_include_directories(utils_test PRIVATE utils)
 	target_link_libraries(utils_test PRIVATE utils)
-endif()
 
+  # pid controller test
+	add_executable(pid_test src/pid_controller.cpp)
+	target_compile_definitions(pid_test PRIVATE PID_TEST_CPP=1)
+	target_include_directories(pid_test PRIVATE pid_controller)
+	target_link_libraries(pid_test PRIVATE pid_controller)
+endif()
 add_executable(mario ${CMAKE_SOURCE_DIR}/src/mario.cpp)
 
-target_include_directories(mario PRIVATE yasmin slam serial utils nav)
+target_include_directories(mario PRIVATE yasmin slam serial utils nav pid_controller)
 
-target_link_libraries(mario PRIVATE yasmin Boost::program_options slam utils serial nav)
+target_link_libraries(mario PRIVATE yasmin Boost::program_options slam utils serial nav pid_controller)
